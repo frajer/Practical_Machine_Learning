@@ -1,0 +1,165 @@
+Predicting the manner of performing the exercise
+================================================
+
+
+Summary
+-----------------
+More and more people use devices such as Jawbone Up, Nike FuelBand, and Fitbit to quantify how much of a particular activity they do, but they rarely quantify how well they do it. The goal of this Project is to (on the basis of data from accelerometers on the belt, forearm, arm, and dumbbell collected from 6 participants, that were asked to perform barbell lifts correctly and incorrectly in 5 different ways)  predict the manner in which they did the exercise.
+
+
+Getting the data
+----------------
+First we download the data from the http://groupware.les.inf.puc-rio.br/har#weight_lifting_exercises site $^1$:
+
+```{r, echo=FALSE, message = FALSE, results='hide'}
+library(caret)
+library(rattle)
+```
+
+```{r, results='hide'}
+echo <- FALSE
+if(!file.exists("./pml-training.csv"))
+{
+    print("Data will be downloaded")
+    url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    download.file(url, "./pml-training.csv", method = "curl")
+} else echo <- TRUE    
+if(!file.exists("./pml-testing.csv"))
+{
+    url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+    download.file(url, "./pml-testing.csv", method = "curl")
+} else echo <- TRUE
+if (echo) print("Data was already downloaded ...")
+```
+
+Exploratory data analysis
+-------------------------
+Then we read the data: 
+```{r, cache=TRUE}
+training <- read.csv("./pml-training.csv")
+testing <- read.csv("./pml-testing.csv")
+```
+and do some exploratory data analysis$^2$:
+```{r, cache=TRUE, eval=FALSE}
+summary(training)
+summary(testing)
+```
+
+
+Preparing data
+--------------
+From exploratory data analysis we see a lot of blank values and "#DIV/0!" fields so we replace both with NA-s.
+```{r, warning = FALSE}
+training[training==""] <- "NA"
+training[training=="#DIV/0!"] <- "NA"
+```
+
+Building the model
+------------------
+We want that our report is reproducible so we set the seed.
+```{r}
+set.seed(965)
+```
+
+First we try to build the model with "rpart" package (which implements "Recursive partitioning for classification, regression and survival trees") and all variables included:
+```{r, eval=FALSE}
+modFit <- train(classe ~ .,method="rpart",data=training)
+```
+But this build is not successful because "Every row has at least one missing value", so we must exclude the variables with more than 90% of NA-s.
+
+```{r, cache=TRUE}
+percNA <- colSums(is.na(training))/dim(training)[1]
+tr <- training[,percNA<0.9]
+not_cc <- sum(complete.cases(tr))-dim(tr)[1]
+print (not_cc)
+```
+
+And try building the model again:
+
+```{r, cache=TRUE}
+modFit1 <- train(classe ~ .,method="rpart",data=tr)
+plot1 <-fancyRpartPlot(modFit1$finalModel)
+```
+
+We see that this model is not appropriate because is based only on "X" variable (index) and never predict "D" classe. So we eliminate the "X" variable from our predictors.
+
+```{r, cache=TRUE}
+modFit2 <- train(classe ~ . - X,method="rpart",data=tr)
+plot2 <- fancyRpartPlot(modFit2$finalModel)
+```
+
+This model uses as predictor timestamps, and because timestamps are not valuable predictor we also eliminate all timestamps predictors:
+
+```{r, cache=TRUE}
+modFit3 <- train(classe ~ . - X-raw_timestamp_part_1-raw_timestamp_part_2-cvtd_timestamp,method="rpart",data=tr)
+fM3 <- modFit3$finalModel
+print(fM3)
+```
+
+Cross Validation
+----------------
+For validating the above model the Random sub sampling was used. We calculated the Accuracy for 1000 random samples of size 20 (the size of testing set) from training set and look the Accuracy Mean and Standard Deviation.
+
+```{r, cache=TRUE}
+accuracy1 <- replicate(1000,
+                 {validating <- training[sample(nrow(training),20),]
+                    predictions <- predict(modFit3,newdata=validating)
+                    cm <- confusionMatrix(predictions,validating$classe)
+                    accuracy <- cm$overall[1]
+                  })
+acc_mean1 <- mean(accuracy1)
+print (acc_mean1)
+acc_sd1 <-sd(accuracy1)
+print (acc_sd1)
+```
+
+We see that Accuracy  for this model is very low, so we must find better tool for building predicting model.
+
+Better Model
+-----------
+
+So for building the better model we used the "ctree" tool from party package.
+
+```{r, cache=TRUE}
+modFit4 <- train(classe ~ .-X-raw_timestamp_part_1-raw_timestamp_part_2-cvtd_timestamp,method="ctree",data=tr)
+fM4 <- modFit4$finalModel
+```
+
+The Accuracy of this model$^3$ is over 90%:
+```{r, cache=TRUE}
+accuracy2 <- replicate(1000,
+                 {validating <- training[sample(nrow(training),20),]
+                    predictions <- predict(modFit4,newdata=validating)
+                    cm <- confusionMatrix(predictions,validating$classe)
+                    accuracy <- cm$overall[1]
+                  })
+acc_mean2 <- mean(accuracy2)
+print (acc_mean2)
+acc_sd2 <-sd(accuracy2)
+print (acc_sd2)
+```
+
+Out of Sample Error
+-------------------
+
+One of the common error measures is Accuracy. In previous paragraph we calculated Accuracy as the In of Sample Error. Because the Out of Sample Errors are always greater than In of Sample Errors we can estimate that Accuracy of the testing sample will be lower than  `r acc_mean2` $\pm$ `r acc_sd2`.
+
+
+References
+----------
+$^1$ Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Appendix
+--------
+
+$^2$ Exploratory Data Analysis
+
+```{r, cache=TRUE}
+summary(training)
+summary(testing)
+```
+
+$^3$ Final Model
+```{r}
+print(fM4)
+```
